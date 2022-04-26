@@ -172,10 +172,11 @@ ShowPwdCommand::ShowPwdCommand(std::vector<std::string> cmd_params) : BuiltInCom
 
 void ShowPwdCommand::execute()
 {
-  if (params_.size() != 0)
+  /*if (params_.size() != 0)
   {
     return;
   }
+  */
   char path[PATH_MAX_LENGTH];
   char *result = getcwd(path, PATH_MAX_LENGTH);
   if (result != nullptr)
