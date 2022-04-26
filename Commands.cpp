@@ -172,10 +172,11 @@ ShowPwdCommand::ShowPwdCommand(std::vector<std::string> cmd_params) : BuiltInCom
 
 void ShowPwdCommand::execute()
 {
-  if (params_.size() != 0)
+  /*if (params_.size() != 0)
   {
     return;
   }
+  */
   char path[PATH_MAX_LENGTH];
   char *result = getcwd(path, PATH_MAX_LENGTH);
   if (result != nullptr)
@@ -236,10 +237,10 @@ std::vector<std::string> split(std::string str)
 Command *Command::createCommand(std::string cmd_line)
 {
   cmd_line = _rtrim(cmd_line);
-  //bool is_foreground_command = true;
+  // bool is_foreground_command = true;
   if (cmd_line[cmd_line.size() - 1] == '&')
   {
-    //is_foreground_command = false;
+    // is_foreground_command = false;
     cmd_line.substr(0, cmd_line.size() - 1); // removes the '&' from cmd_line
   }
   std::vector<std::string> cmd_params = split(cmd_line);
@@ -252,9 +253,9 @@ Command *Command::createCommand(std::string cmd_line)
   case 1:
     cmd_object_ptr = new ChPromptCommand(cmd_params);
     return cmd_object_ptr;
-  /*case 2:
+  case 2:
     cmd_object_ptr = new ShowPidCommand(cmd_params);
-    return cmd_object_ptr;*/
+    return cmd_object_ptr;
   case 3:
     cmd_object_ptr = new ShowPwdCommand(cmd_params);
     return cmd_object_ptr;
@@ -341,4 +342,16 @@ std::string &LastPath::getLastPath()
 void LastPath::setLastPath(std::string new_last_path)
 {
   full_last_path_ = new_last_path;
+}
+
+// Creating PidCommand Object
+ShowPidCommand::ShowPidCommand(std::vector<std::string> cmd_params) : BuiltInCommand(cmd_params) {}
+
+void ShowPidCommand::execute()
+{
+  /*getting the pid with a system call. Cannot use the DO_SYS
+    macro because it doesnt allow us to return a value */
+  pid_t smash_pid = getpid();
+  // outputting the pid per the requested foramt
+  std::cout << "smash pid is " << smash_pid << "\n";
 }
