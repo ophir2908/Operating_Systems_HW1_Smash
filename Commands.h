@@ -1,12 +1,14 @@
 #ifndef SMASH_COMMAND_H_
 #define SMASH_COMMAND_H_
 
+#include <string.h>
 #include <vector>
 #include <map>
 
 #define PATH_MAX_LENGTH (200)
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+#define KILL_SIGNAL (9)
 
 #define DO_SYS(syscall)               \
   do                                  \
@@ -19,17 +21,21 @@
     }                                 \
     while (0)
 
+class JobsList;
 class Command
 {
 protected:
-  Command(std::vector<std::string> cmd_params);
-  std::vector<std::string> params_;
+  Command(std::string &cmd_line);
+
+  std::string cmd_line_;
   // bool is_foreground_command_;
   // TODO: Add your data members
 public:
+  bool finishedWithAmparsand();
+  std::string getCommandLine();
   virtual ~Command() = default;
   virtual void execute() = 0;
-  static Command *createCommand(std::string cmd_line);
+  static Command *getInstance(std::string cmd_line, JobsList *jobs);
   // virtual void prepare();
   // virtual void cleanup();
   //  TODO: Add your extra methods if needed
@@ -37,15 +43,21 @@ public:
 
 class BuiltInCommand : public Command
 {
+protected:
+  std::vector<std::string> cmd_words_;
+
 public:
-  BuiltInCommand(std::vector<std::string> cmd_params);
+  BuiltInCommand(std::vector<std::string> cmd_params, std::string &cmd_line);
+  std::vector<std::string> getBuiltInCommandWords();
   virtual ~BuiltInCommand() {}
 };
 
 class ExternalCommand : public Command
 {
+  JobsList *jobs_;
+
 public:
-  ExternalCommand(std::string cmd_line);
+  ExternalCommand(std::string cmd_line, JobsList *jobs);
   virtual ~ExternalCommand() {}
   void execute() override;
 };
@@ -75,7 +87,7 @@ class ChangeDirCommand : public BuiltInCommand
   std::string lastPwd_;
   // TODO: Add your data members public:
 public:
-  ChangeDirCommand(std::vector<std::string> cmd_params);
+  ChangeDirCommand(std::vector<std::string> cmd_params, std::string cmd_line);
   virtual ~ChangeDirCommand() {}
   void execute() override;
 };
@@ -91,7 +103,7 @@ public:
 class ShowPidCommand : public BuiltInCommand
 {
 public:
-  ShowPidCommand(std::vector<std::string> cmd_params);
+  ShowPidCommand(std::vector<std::string> cmd_params, std::string cmd_line);
   virtual ~ShowPidCommand() {}
   void execute() override;
 };
@@ -106,51 +118,81 @@ public:
   void execute() override;
 };
 
+class JobsCommand;
 class JobsList
 {
 public:
   class JobEntry
   {
+    const int job_id_;
+    const int process_id_;
+    const std::string command_text_;
+    bool is_stopped_;
+    const time_t start_time_;
+    friend std::ostream &operator<<(std::ostream &os, const JobsList::JobEntry &job);
+
+  public:
+    JobEntry(int job_id, int process_id, std::string command_text_, bool is_stopped, time_t start_time_);
+    int getProcessId();
+    std::string getCommandText();
+    int getJobId();
+    bool getIsStopped();
+    void setIsStopped(bool new_is_stopped);
     // TODO: Add your data members
   };
+
+private:
+  std::map<int, JobEntry *> jobs_;
+  JobEntry *foreground_job_;
   // TODO: Add your data members
+  friend JobsCommand;
+
 public:
+  int getMaxJobId();
   JobsList();
   ~JobsList();
-  void addJob(Command *cmd, bool isStopped = false);
+  void moveToForegound(int jobs_id);
+  void removeForegroundJob();
+  bool isJobIdExist(int job_id);
+  pid_t addJob(Command *cmd, bool isForeground, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
   void removeFinishedJobs();
   JobEntry *getJobById(int jobId);
   void removeJobById(int jobId);
-  JobEntry *getLastJob(int *lastJobId);
-  JobEntry *getLastStoppedJob(int *jobId);
-  // TODO: Add extra methods or modify exisitng ones as needed
+  int getJobsAmount();
+  // JobEntry *getLastJob(int *lastJobId);
+  // JobEntry *getLastStoppedJob(int *jobId);
+  //  TODO: Add extra methods or modify exisitng ones as needed
 };
 
 class JobsCommand : public BuiltInCommand
 {
   // TODO: Add your data members
+  JobsList *jobs_;
+
 public:
-  JobsCommand(std::vector<std::string> cmd_params, JobsList *jobs);
+  JobsCommand(std::vector<std::string> cmd_params, std::string cmd_line, JobsList *jobs);
   virtual ~JobsCommand() {}
   void execute() override;
 };
 
 class KillCommand : public BuiltInCommand
 {
+  JobsList *jobs_;
   // TODO: Add your data members
 public:
-  KillCommand(std::vector<std::string> cmd_params, JobsList *jobs);
+  KillCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
   virtual ~KillCommand() {}
   void execute() override;
 };
 
 class ForegroundCommand : public BuiltInCommand
 {
+  JobsList *jobs_;
   // TODO: Add your data members
 public:
-  ForegroundCommand(std::vector<std::string> cmd_params, JobsList *jobs);
+  ForegroundCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
   virtual ~ForegroundCommand() {}
   void execute() override;
 };
@@ -159,7 +201,7 @@ class BackgroundCommand : public BuiltInCommand
 {
   // TODO: Add your data members
 public:
-  BackgroundCommand(std::vector<std::string> cmd_params, JobsList *jobs);
+  BackgroundCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
   virtual ~BackgroundCommand() {}
   void execute() override;
 };
@@ -183,6 +225,7 @@ public:
 class SmallShell
 {
 private:
+  JobsList jobs_;
   // TODO: Add your data members
   SmallShell();
 
@@ -244,29 +287,29 @@ public:
   void setLastPath(std::string new_last_path);
 };
 
-class BuiltInCommandNamesMap
+class BuiltInCommandNamesToNumbers
 {
 private:
-  std::map<std::string, int> map_;
-  BuiltInCommandNamesMap();
+  std::map<std::string, int> commands_map_;
+  BuiltInCommandNamesToNumbers();
 
 public:
-  BuiltInCommandNamesMap(BuiltInCommandNamesMap const &) = delete; // disable copy ctor
-  void operator=(BuiltInCommandNamesMap const &) = delete;         // disable = operator
-  static BuiltInCommandNamesMap &getInstance()                     // make BuiltInCommandNamesMap singleton
+  BuiltInCommandNamesToNumbers(BuiltInCommandNamesToNumbers const &) = delete; // disable copy ctor
+  void operator=(BuiltInCommandNamesToNumbers const &) = delete;               // disable = operator
+  static BuiltInCommandNamesToNumbers &getInstance()                           // make BuiltInCommandNamesToNumbers singleton
   {
-    static BuiltInCommandNamesMap instance; // Guaranteed to be destroyed.
+    static BuiltInCommandNamesToNumbers instance; // Guaranteed to be destroyed.
     // Instantiated on first use.
     return instance;
   }
-  ~BuiltInCommandNamesMap() = default;
+  ~BuiltInCommandNamesToNumbers() = default;
   int getCommandNumber(const std::string &cmd_name);
 };
 
 class ChPromptCommand : public BuiltInCommand
 {
 public:
-  ChPromptCommand(std::vector<std::string> cmd_params);
+  ChPromptCommand(std::vector<std::string> cmd_params, std::string &cmd_line);
   virtual ~ChPromptCommand() = default;
   void execute() override;
 };
@@ -275,7 +318,7 @@ class ShowPwdCommand : public BuiltInCommand
 {
   // TODO: Add your data members public:
 public:
-  ShowPwdCommand(std::vector<std::string> cmd_params);
+  ShowPwdCommand(std::vector<std::string> cmd_params, std::string &cmd_line);
   virtual ~ShowPwdCommand() {}
   void execute() override;
 };
