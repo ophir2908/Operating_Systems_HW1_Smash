@@ -4,11 +4,10 @@
 #include <string.h>
 #include <vector>
 #include <map>
-
+#include <list>
 #define PATH_MAX_LENGTH (200)
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
-#define KILL_SIGNAL (9)
 
 #define DO_SYS(syscall)               \
   do                                  \
@@ -111,7 +110,8 @@ public:
 class JobsList;
 class QuitCommand : public BuiltInCommand
 {
-public:
+  JobsList *jobs_;
+public: 
   // TODO: Add your data members public:
   QuitCommand(std::vector<std::string>, JobsList *jobs);
   virtual ~QuitCommand() {}
@@ -136,7 +136,7 @@ public:
     int getProcessId();
     std::string getCommandText();
     int getJobId();
-    bool getIsStopped();
+    bool isStopped();
     void setIsStopped(bool new_is_stopped);
     // TODO: Add your data members
   };
@@ -144,14 +144,17 @@ public:
 private:
   std::map<int, JobEntry *> jobs_;
   JobEntry *foreground_job_;
+  std::list<int> stopped_jobs_ids_;
   // TODO: Add your data members
   friend JobsCommand;
+  JobsList();
 
 public:
   int getMaxJobId();
-  JobsList();
   ~JobsList();
-  void moveToForegound(int jobs_id);
+  int getForegroundJobPid();
+  JobEntry *getForegroundJob();
+  void moveToForegound(int job_id);
   void removeForegroundJob();
   bool isJobIdExist(int job_id);
   pid_t addJob(Command *cmd, bool isForeground, bool isStopped = false);
@@ -161,8 +164,18 @@ public:
   JobEntry *getJobById(int jobId);
   void removeJobById(int jobId);
   int getJobsAmount();
+  JobsList(JobsList const &) = delete;       // disable copy ctor
+  void operator=(JobsList const &) = delete; // disable = operator
+  static JobsList &getInstance()             // make JobsList singleton
+  {
+    static JobsList instance; // Guaranteed to be destroyed.
+    // Instantiated on first use.
+    return instance;
+  }
+  void stopForegroundJob();
+  void resumeJobById(int job_id);
+  JobEntry *getLastStoppedJob();
   // JobEntry *getLastJob(int *lastJobId);
-  // JobEntry *getLastStoppedJob(int *jobId);
   //  TODO: Add extra methods or modify exisitng ones as needed
 };
 
@@ -199,6 +212,7 @@ public:
 
 class BackgroundCommand : public BuiltInCommand
 {
+  JobsList *jobs_;
   // TODO: Add your data members
 public:
   BackgroundCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
@@ -225,7 +239,6 @@ public:
 class SmallShell
 {
 private:
-  JobsList jobs_;
   // TODO: Add your data members
   SmallShell();
 
@@ -322,5 +335,6 @@ public:
   virtual ~ShowPwdCommand() {}
   void execute() override;
 };
+
 
 #endif // SMASH_COMMAND_H_
