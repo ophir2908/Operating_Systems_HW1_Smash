@@ -14,14 +14,17 @@ int main(int argc, char* argv[]) {
     }
 
     //TODO: setup sig alarm handler
-
     SmallShell& smash = SmallShell::getInstance();
     Prompt& prompt = Prompt::getInstance();
     while(true) {
         std::cout << prompt.getPrompt() << "> ";
         std::string cmd_line;
         std::getline(std::cin, cmd_line);
+        if (cmd_line.empty()) { // OPHIR: remove?
+            continue;
+        }
         smash.executeCommand(cmd_line);
+        std::cout << "finished command\n\n";
     }
     return 0;
 }

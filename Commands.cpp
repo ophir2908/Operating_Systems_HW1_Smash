@@ -43,13 +43,12 @@ string _trim(const std::string &s)
 
 bool isNumbericString(std::string str)
 {
-  while (str.size() != 0)
+  for (unsigned i = 0; i < str.size(); i++)
   {
-    if (str[0] > '9' || str[0] < '0')
+    if (str[i] > '9' || str[i] < '0')
     {
       return false;
     }
-    str.substr(1);
   }
   return true;
 }
@@ -139,8 +138,9 @@ Command *SmallShell::CreateCommand(std::string cmd_line)
 void SmallShell::executeCommand(std::string cmd_line)
 {
   // TODO: Add your implementation here
-  Command *cmd = Command::getInstance(cmd_line, &jobs_);
-  jobs_.removeFinishedJobs();
+  JobsList &jobs = JobsList::getInstance();
+  Command *cmd = Command::getInstance(cmd_line, &jobs);
+  jobs.removeFinishedJobs();
   cmd->execute();
   delete cmd;
   // for example:
@@ -323,10 +323,10 @@ Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
   case FG:
     cmd_object_ptr = new ForegroundCommand(cmd_words, cmd_line, jobs);
     return cmd_object_ptr;
-  /*case BG:
+  case BG:
     cmd_object_ptr = new BackgroundCommand(cmd_words, cmd_line, jobs);
     return cmd_object_ptr;
-  case QUIT:
+  /*case QUIT:
     cmd_object_ptr = new QuitCommand(cmd_words, cmd_line, jobs);
     return cmd_object_ptr;
     */
@@ -338,6 +338,67 @@ Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
   return cmd_object_ptr;
 }
 
+BackgroundCommand::BackgroundCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
+
+void BackgroundCommand::execute()
+{
+  if (cmd_words_.size() > 2 || (cmd_words_.size() == 2 && !isNumbericString(cmd_words_[1])))
+  {
+    std::cerr << "smash error: fg: invalid arguments\n";
+    return;
+  }
+  JobsList::JobEntry *job_to_resume = nullptr;
+  if (cmd_words_.size() == 1)
+  {
+    job_to_resume = jobs_->getLastStoppedJob();
+    std::cout << job_to_resume << " job_to_resume\n";
+    if (job_to_resume == nullptr)
+    {
+      std::cerr << "smash error: bg: there is no stopped jobs to resume\n";
+      return;
+    }
+  }
+  else
+  { // cmd_words_.size() == 2
+    int job_id = stoi(cmd_words_[1]);
+    if (!jobs_->isJobIdExist(job_id))
+    {
+      std::cerr << "smash error: bg: job-id <job-id> does not exist\n";
+      return;
+    }
+    job_to_resume = jobs_->getJobById(job_id);
+    if (!job_to_resume->isStopped())
+    {
+      std::cerr << "smash error: bg: job-id <job-id fg > is already running in the background\n";
+      return;
+    }
+  }
+  std::cout << job_to_resume->getCommandText() << "\n";
+  jobs_->resumeJobById(job_to_resume->getJobId());
+}
+
+void JobsList::resumeJobById(int job_id)
+{
+  JobEntry *job = getJobById(job_id);
+  job->setIsStopped(false);
+  stopped_jobs_ids_.remove(job_id);
+  kill(job->getProcessId(), SIGCONT);
+}
+
+JobsList::JobEntry *JobsList::getLastStoppedJob()
+{
+  std::cout << stopped_jobs_ids_.size() << " stopped_jobs_ids_.size()\n";
+  if (stopped_jobs_ids_.size() == 0)
+  {
+    return nullptr;
+  }
+  std::cout << "after if\n";
+  JobsList::JobEntry *last_stopped_job = getJobById(stopped_jobs_ids_.front());
+  std::cout << last_stopped_job << " last_stopped_job\n";
+  stopped_jobs_ids_.pop_front();
+  return last_stopped_job;
+}
+
 int JobsList::getJobsAmount()
 {
   if (foreground_job_ == nullptr)
@@ -347,44 +408,55 @@ int JobsList::getJobsAmount()
   return jobs_.size() + 1;
 }
 
-ForegroundCommand::ForegroundCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
+ForegroundCommand::ForegroundCommand(std::vector<std::string> cmd_words,
+                                     std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
 
 void ForegroundCommand::execute()
 {
+
   if (cmd_words_.size() > 2 || (cmd_words_.size() == 2 && !isNumbericString(cmd_words_[1])))
   {
     std::cerr << "smash error: fg: invalid arguments\n";
     return;
   }
+
   if (cmd_words_.size() == 1 && jobs_->getJobsAmount() == 0)
   {
     std::cerr << "smash error: fg: jobs list is empty\n";
     return;
   }
+
   if (cmd_words_.size() == 2 && !jobs_->isJobIdExist(stoi(cmd_words_[1])))
   {
     std::cerr << "smash error: fg: job-id <job-id> does not exist\n";
     return;
   }
 
-  int new_foreground_job_id = cmd_words_.size() == 1 ? jobs_->getMaxJobId() : stoi(cmd_words_[1]);
+  int new_foreground_job_id = cmd_words_.size() == 2 ? stoi(cmd_words_[1]) : jobs_->getMaxJobId();
   jobs_->moveToForegound(new_foreground_job_id);
 }
 
-void JobsList::moveToForegound(int jobs_id)
+void JobsList::moveToForegound(int job_id)
 {
-  foreground_job_ = jobs_[jobs_id];
-  jobs_.erase(jobs_id);
-  pid_t p = jobs_[jobs_id]->getProcessId();
-  waitpid(p, nullptr, 0);
-  removeForegroundJob();
+  foreground_job_ = jobs_[job_id];
+  jobs_.erase(job_id);
+  if (foreground_job_->isStopped() == true)
+  {
+    resumeJobById(job_id);
+  }
+  pid_t p = foreground_job_->getProcessId();
+  waitpid(p, nullptr, WUNTRACED);
+  if (waitpid(p, nullptr, WNOHANG) > 0)
+  {
+    removeForegroundJob();
+  }
 }
 
 KillCommand::KillCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
 
 bool JobsList::isJobIdExist(int job_id)
 {
-  return foreground_job_->getJobId() == job_id || jobs_.find(job_id) != jobs_.end();
+  return (foreground_job_ != nullptr && foreground_job_->getJobId() == job_id) || jobs_.find(job_id) != jobs_.end();
 }
 
 void KillCommand::execute()
@@ -488,7 +560,7 @@ int JobsList::JobEntry::getJobId()
   return job_id_;
 }
 
-bool JobsList::JobEntry::getIsStopped()
+bool JobsList::JobEntry::isStopped()
 {
   return is_stopped_;
 }
@@ -529,8 +601,13 @@ void callBashExec(ExternalCommand *cmd)
   std::string str = cmd->getCommandLine();
   char *chars_str = new char[str.size()];
   std::cout << chars_str;
+  str = _rtrim(str);
   int size = str.size();
-  strncpy(chars_str, _rtrim(str).substr(0, size - 1).c_str(), size);
+  strncpy(chars_str, str.c_str(), size + 1);
+  if (chars_str[size - 1] == '&')
+  {
+    chars_str[size - 1] = '\0';
+  }
   execl("/bin/bash", "bash", "-c", chars_str, nullptr);
   std::cout << errno << "\n";
   // if we are here, the exec has failed.
@@ -558,8 +635,11 @@ void ExternalCommand::execute()
   {
     if (isForeground)
     {
-      waitpid(p, nullptr, 0);
-      jobs_->removeForegroundJob();
+      waitpid(p, nullptr, WUNTRACED);
+      if (waitpid(p, nullptr, WNOHANG) > 0)
+      {
+        jobs_->removeForegroundJob();
+      }
     }
   }
 }
@@ -586,7 +666,7 @@ bool Command::finishedWithAmparsand()
 
 pid_t JobsList::addJob(Command *cmd, bool isForeground, bool isStopped)
 {
-  int max_job_id = getMaxJobId();
+  int new_job_id = getMaxJobId() + 1;
   pid_t p = fork();
   if (p < 0)
   {
@@ -598,8 +678,7 @@ pid_t JobsList::addJob(Command *cmd, bool isForeground, bool isStopped)
   }
   else
   {
-    max_job_id++;
-    JobEntry *new_job = new JobEntry(max_job_id, p,
+    JobEntry *new_job = new JobEntry(new_job_id, p,
                                      cmd->getCommandLine(),
                                      isStopped, time(nullptr));
     if (isForeground)
@@ -608,7 +687,7 @@ pid_t JobsList::addJob(Command *cmd, bool isForeground, bool isStopped)
     }
     else
     {
-      jobs_[max_job_id] = new_job;
+      jobs_[new_job_id] = new_job;
     }
     return p;
   }
@@ -629,7 +708,7 @@ void JobsList::killAllJobs()
        iter != jobs_.end(); iter++)
   {
     JobEntry *job = iter->second;
-    kill(job->getProcessId(), KILL_SIGNAL);
+    kill(job->getProcessId(), SIGKILL);
   }
 }
 
@@ -649,6 +728,7 @@ void JobsList::removeFinishedJobs()
   for (unsigned i = 0; i < toErase.size(); i++)
   {
     int job_id = toErase[i];
+    stopped_jobs_ids_.remove(job_id);
     delete jobs_[job_id];
     jobs_.erase(job_id);
   }
@@ -656,10 +736,34 @@ void JobsList::removeFinishedJobs()
 
 JobsList::JobEntry *JobsList::getJobById(int jobId)
 {
+  if (foreground_job_ != nullptr && foreground_job_->getJobId() == jobId)
+  {
+    return foreground_job_;
+  }
   return jobs_[jobId];
 }
 
 void JobsList::removeJobById(int jobId)
 {
   jobs_.erase(jobId);
+  stopped_jobs_ids_.remove(jobId);
+}
+
+int JobsList::getForegroundJobPid()
+{
+  return foreground_job_->getProcessId();
+}
+
+JobsList::JobEntry *JobsList::getForegroundJob()
+{
+  return foreground_job_;
+}
+
+void JobsList::stopForegroundJob()
+{
+  foreground_job_->setIsStopped(true);
+  int forented_job_id = foreground_job_->getJobId();
+  stopped_jobs_ids_.push_front(forented_job_id);
+  jobs_[forented_job_id] = foreground_job_;
+  foreground_job_ = nullptr;
 }
