@@ -46,7 +46,7 @@ protected:
   std::vector<std::string> cmd_words_;
 
 public:
-  BuiltInCommand(std::vector<std::string> cmd_params, std::string &cmd_line);
+  BuiltInCommand(std::vector<std::string> cmd_words, std::string &cmd_line);
   std::vector<std::string> getBuiltInCommandWords();
   virtual ~BuiltInCommand() {}
 };
@@ -86,7 +86,7 @@ class ChangeDirCommand : public BuiltInCommand
   std::string lastPwd_;
   // TODO: Add your data members public:
 public:
-  ChangeDirCommand(std::vector<std::string> cmd_params, std::string cmd_line);
+  ChangeDirCommand(std::vector<std::string> cmd_words, std::string cmd_line);
   virtual ~ChangeDirCommand() {}
   void execute() override;
 };
@@ -102,7 +102,7 @@ public:
 class ShowPidCommand : public BuiltInCommand
 {
 public:
-  ShowPidCommand(std::vector<std::string> cmd_params, std::string cmd_line);
+  ShowPidCommand(std::vector<std::string> cmd_words, std::string cmd_line);
   virtual ~ShowPidCommand() {}
   void execute() override;
 };
@@ -113,7 +113,7 @@ class QuitCommand : public BuiltInCommand
   JobsList *jobs_;
 public: 
   // TODO: Add your data members public:
-  QuitCommand(std::vector<std::string>, JobsList *jobs);
+  QuitCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
   virtual ~QuitCommand() {}
   void execute() override;
 };
@@ -159,7 +159,7 @@ public:
   bool isJobIdExist(int job_id);
   pid_t addJob(Command *cmd, bool isForeground, bool isStopped = false);
   void printJobsList();
-  void killAllJobs();
+  void killAllJobsWithPrinting();
   void removeFinishedJobs();
   JobEntry *getJobById(int jobId);
   void removeJobById(int jobId);
@@ -185,7 +185,7 @@ class JobsCommand : public BuiltInCommand
   JobsList *jobs_;
 
 public:
-  JobsCommand(std::vector<std::string> cmd_params, std::string cmd_line, JobsList *jobs);
+  JobsCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
   virtual ~JobsCommand() {}
   void execute() override;
 };
@@ -322,7 +322,7 @@ public:
 class ChPromptCommand : public BuiltInCommand
 {
 public:
-  ChPromptCommand(std::vector<std::string> cmd_params, std::string &cmd_line);
+  ChPromptCommand(std::vector<std::string> cmd_words, std::string &cmd_line);
   virtual ~ChPromptCommand() = default;
   void execute() override;
 };
@@ -331,7 +331,7 @@ class ShowPwdCommand : public BuiltInCommand
 {
   // TODO: Add your data members public:
 public:
-  ShowPwdCommand(std::vector<std::string> cmd_params, std::string &cmd_line);
+  ShowPwdCommand(std::vector<std::string> cmd_words, std::string &cmd_line);
   virtual ~ShowPwdCommand() {}
   void execute() override;
 };

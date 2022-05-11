@@ -24,7 +24,6 @@ int main(int argc, char* argv[]) {
             continue;
         }
         smash.executeCommand(cmd_line);
-        std::cout << "finished command\n\n";
     }
     return 0;
 }
