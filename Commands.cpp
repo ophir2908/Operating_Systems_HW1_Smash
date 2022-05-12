@@ -8,6 +8,9 @@
 #include <utime.h>
 #include <cstring>
 #include <unistd.h>
+#include <algorithm>
+#include <iostream>
+#include <fstream>
 
 using namespace std;
 
@@ -204,11 +207,11 @@ void ShowPwdCommand::execute()
   char *result = getcwd(path, PATH_MAX_LENGTH);
   if (result != nullptr)
   {
-    std::cout << path << "\n";
+    fprintf(getOutFile(), "%s\n", path);
   }
 }
 
-BuiltInCommandNamesToNumbers::BuiltInCommandNamesToNumbers()
+CommandNamesToNumbers::CommandNamesToNumbers()
 {
   static const std::vector<std::string> cmd_names = {
       "chprompt",
@@ -220,14 +223,15 @@ BuiltInCommandNamesToNumbers::BuiltInCommandNamesToNumbers()
       "fg",
       "bg",
       "quit",
-  };
+      "tail",
+      "touch"};
   for (size_t i = 0; i < cmd_names.size(); i++)
   {
     commands_map_[cmd_names[i]] = i + 1;
   }
 }
 
-int BuiltInCommandNamesToNumbers::getCommandNumber(const std::string &cmd_name)
+int CommandNamesToNumbers::getCommandNumber(const std::string &cmd_name)
 {
   std::map<std::string, int>::iterator cmd_iterator = commands_map_.find(cmd_name);
   if (cmd_iterator == commands_map_.end())
@@ -240,7 +244,10 @@ int BuiltInCommandNamesToNumbers::getCommandNumber(const std::string &cmd_name)
 std::vector<std::string> split(std::string str, char split_by = ' ')
 {
   std::vector<std::string> vec;
-  str = _trim(str);
+  if (split_by == ' ')
+  {
+    str = _trim(str);
+  }
   size_t index;
   while (str.size() > 0)
   {
@@ -251,8 +258,11 @@ std::vector<std::string> split(std::string str, char split_by = ' ')
       return vec;
     }
     vec.push_back(str.substr(0, index));
-    str = str.substr(index);
-    str = _ltrim(str);
+    str = str.substr(index + 1);
+    if (split_by == ' ')
+    {
+      str = _ltrim(str);
+    }
   }
   return vec;
 }
@@ -263,7 +273,7 @@ void JobsCommand::execute()
   for (map<int, JobsList::JobEntry *>::iterator iter = jobs_->jobs_.begin();
        iter != jobs_->jobs_.end(); iter++)
   {
-    std::cout << *(iter->second);
+    fprintf(getOutFile(), "%s", iter->second->toString().c_str());
   }
 }
 
@@ -274,19 +284,49 @@ std::string JobsList::JobEntry::getCommandText()
 
 JobsCommand::JobsCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
 
-Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
+TailCommand::TailCommand(std::vector<std::string> cmd_words, std::string cmd_line) : BuiltInCommand(cmd_words, cmd_line) {}
+
+void TailCommand::execute()
 {
-  std::string cmd_line_copy = cmd_line;
-  cmd_line_copy = _rtrim(cmd_line_copy);
-  // bool is_foreground_command = true;
-  if (cmd_line_copy[cmd_line_copy.size() - 1] == '&')
+  int size = cmd_words_.size();
+  if (size > 3 || size == 1 ||
+      (size == 3 &&
+       (cmd_words_[1][0] != '-' ||
+        cmd_words_[1].size() < 2 ||
+        !isNumbericString(cmd_words_[1].substr(1)))))
   {
-    // is_foreground_command = false;
-    cmd_line_copy.substr(0, cmd_line_copy.size() - 1); // removes the '&' from cmd_line
+    fprintf(getErrFile(), "smash error: tail: invalid arguments\n");
+    return;
   }
-  std::vector<std::string> cmd_words = split(cmd_line_copy);
+  std::string file_name = size == 2 ? cmd_words_[1] : cmd_words_[2];
+  int lines_amount = size == 2 ? 10 : stoi(cmd_words_[1].substr(1));
+  std::ifstream file;
+  file.open(file_name);
+  std::string line;
+  for (int i = 0; i < lines_amount; i++)
+  {
+    std::getline(file, line);
+    if (file.eof())
+    {
+      break;
+    }
+    fprintf(getOutFile(), "%s\n", line.c_str());
+  }
+  file.close();
+}
+
+/*TouchCommand::TouchCommand(std::vector<std::string> cmd_words, std::string cmd_line) : BuiltInCommand(cmd_words, cmd_line) {}
+
+void TouchCommand::execute()
+{
+
+}*/
+
+Command *Command::getCommandFromTheRightType(std::vector<std::string> cmd_words,
+                                             std::string cmd_line, JobsList *jobs)
+{
   std::string command_type = cmd_words[0];
-  BuiltInCommandNamesToNumbers &built_in_map = BuiltInCommandNamesToNumbers::getInstance();
+  CommandNamesToNumbers &commands_map = CommandNamesToNumbers::getInstance();
   Command *cmd_object_ptr = nullptr;
   enum commannd_numbers
   {
@@ -299,8 +339,10 @@ Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
     FG = 7,
     BG = 8,
     QUIT = 9,
+    TAIL = 10,
+    TOUCH = 11
   };
-  switch (built_in_map.getCommandNumber(command_type))
+  switch (commands_map.getCommandNumber(command_type))
   {
   case CHPROMPT:
     cmd_object_ptr = new ChPromptCommand(cmd_words, cmd_line);
@@ -329,12 +371,134 @@ Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
   case QUIT:
     cmd_object_ptr = new QuitCommand(cmd_words, cmd_line, jobs);
     return cmd_object_ptr;
+  case TAIL:
+    cmd_object_ptr = new TailCommand(cmd_words, cmd_line);
+    return cmd_object_ptr;
+  /*case TOUCH:
+    cmd_object_ptr = new TouchCommand(cmd_words, cmd_line);
+    return cmd_object_ptr;*/
   default:
-    // the command is not a built in command
+    // the command is not a built-in command
     cmd_object_ptr = new ExternalCommand(cmd_line, jobs);
     return cmd_object_ptr;
   }
-  return cmd_object_ptr;
+}
+
+FILE *Command::getInFile()
+{
+  return in_file_;
+}
+FILE *Command::getOutFile()
+{
+  return out_file_;
+}
+FILE *Command::getErrFile()
+{
+  return err_file_;
+}
+void Command::setInFile(FILE *in_file)
+{
+  in_file_ = in_file;
+}
+void Command::setOutFile(FILE *out_file)
+{
+  out_file_ = out_file;
+}
+void Command::setErrFile(FILE *err_file)
+{
+  err_file_ = err_file;
+}
+
+Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
+{
+  std::string cmd_line_copy = cmd_line;
+  cmd_line_copy = _rtrim(cmd_line_copy);
+  // bool is_foreground_command = true;
+  if (cmd_line_copy[cmd_line_copy.size() - 1] == '&')
+  {
+    // is_foreground_command = false;
+    cmd_line_copy.substr(0, cmd_line_copy.size() - 1); // removes the '&' from cmd_line
+  }
+  std::vector<std::string> cmd_words = split(cmd_line_copy);
+  if (std::find(cmd_line.begin(), cmd_line.end(), '|') != cmd_line.end())
+  {
+    // this is a pipeline command
+    return new PipeCommand(cmd_line);
+  }
+  if (std::find(cmd_line.begin(), cmd_line.end(), '>') != cmd_line.end())
+  {
+    // this is an RedirectionCommand command
+    return new RedirectionCommand(cmd_line);
+  }
+  return getCommandFromTheRightType(cmd_words, cmd_line, jobs);
+}
+
+void RedirectionCommand::execute()
+{
+  cmd_->execute();
+  fclose(input_file_);
+}
+
+RedirectionCommand::RedirectionCommand(std::string cmd_line) : Command(cmd_line)
+{
+  std::vector<std::string> cmd_parts = split(cmd_line, '>');
+  char writing_type[2] = "w";
+  if (cmd_parts[1] == "")
+  {
+    // we contains ">>"
+    writing_type[0] = 'a';
+    cmd_parts.erase(++cmd_parts.begin());
+  }
+  JobsList &jobs = JobsList::getInstance();
+  cmd_ = Command::getInstance(cmd_parts[0], &jobs);
+  std::string file_name = _trim(cmd_parts[1]);
+  input_file_ = fopen(file_name.c_str(), writing_type);
+  if (input_file_ == nullptr)
+  {
+    perror("fopen failed\n");
+  }
+  else
+  {
+    cmd_->setOutFile(input_file_);
+  }
+}
+
+void PipeCommand::execute()
+{
+  first_cmd_->execute();
+  second_cmd_->execute();
+  fclose(fds_[0]);
+  fclose(fds_[1]);
+}
+
+PipeCommand::PipeCommand(std::string cmd_line) : Command(cmd_line)
+{
+  std::vector<std::string> cmd_parts = split(cmd_line, '|');
+  bool is_to_cerr = false;
+  if (cmd_parts[1][0] == '&')
+  {
+    is_to_cerr = true;
+    cmd_parts[1] = cmd_parts[1].substr(1);
+  }
+  JobsList &jobs = JobsList::getInstance();
+  first_cmd_ = Command::getInstance(cmd_parts[0], &jobs);
+  second_cmd_ = Command::getInstance(cmd_parts[1], &jobs);
+  int tmp_fds[2];
+  if (pipe(tmp_fds) < 0)
+  {
+    perror("pipe creation failed.\n");
+  }
+  fds_[0] = fdopen(tmp_fds[0], "r");
+  fds_[1] = fdopen(tmp_fds[1], "w");
+  if (is_to_cerr)
+  {
+    first_cmd_->setErrFile(fds_[1]);
+  }
+  else
+  {
+    first_cmd_->setOutFile(fds_[1]);
+  }
+  second_cmd_->setInFile(fds_[0]);
 }
 
 QuitCommand::QuitCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
@@ -343,7 +507,7 @@ void QuitCommand::execute()
 {
   if (cmd_words_.size() == 2 && cmd_words_[1] == "kill")
   {
-    std::cout << "smash: sending SIGKILL signal to " << jobs_->getJobsAmount() << " jobs:\n";
+    fprintf(getOutFile(), "smash: sending SIGKILL signal to %d jobs:\n", jobs_->getJobsAmount());
     jobs_->killAllJobsWithPrinting();
   }
   exit(0);
@@ -355,7 +519,7 @@ void BackgroundCommand::execute()
 {
   if (cmd_words_.size() > 2 || (cmd_words_.size() == 2 && !isNumbericString(cmd_words_[1])))
   {
-    std::cerr << "smash error: fg: invalid arguments\n";
+    fprintf(getErrFile(), "smash error: fg: invalid arguments\n");
     return;
   }
   JobsList::JobEntry *job_to_resume = nullptr;
@@ -364,7 +528,7 @@ void BackgroundCommand::execute()
     job_to_resume = jobs_->getLastStoppedJob();
     if (job_to_resume == nullptr)
     {
-      std::cerr << "smash error: bg: there is no stopped jobs to resume\n";
+      fprintf(getErrFile(), "smash error: bg: there is no stopped jobs to resume\n");
       return;
     }
   }
@@ -373,17 +537,17 @@ void BackgroundCommand::execute()
     int job_id = stoi(cmd_words_[1]);
     if (!jobs_->isJobIdExist(job_id))
     {
-      std::cerr << "smash error: bg: job-id <job-id> does not exist\n";
+      fprintf(getErrFile(), "smash error: bg: job-id <job-id> does not exist\n");
       return;
     }
     job_to_resume = jobs_->getJobById(job_id);
     if (!job_to_resume->isStopped())
     {
-      std::cerr << "smash error: bg: job-id <job-id fg > is already running in the background\n";
+      fprintf(getErrFile(), "smash error: bg: job-id <job-id fg > is already running in the background\n");
       return;
     }
   }
-  std::cout << job_to_resume->getCommandText() << "\n";
+  fprintf(getOutFile(), "%s\n", job_to_resume->getCommandText().c_str());
   jobs_->resumeJobById(job_to_resume->getJobId());
 }
 
@@ -419,24 +583,24 @@ void ForegroundCommand::execute()
 
   if (cmd_words_.size() > 2 || (cmd_words_.size() == 2 && !isNumbericString(cmd_words_[1])))
   {
-    std::cerr << "smash error: fg: invalid arguments\n";
+    fprintf(getErrFile(), "smash error: fg: invalid arguments\n");
     return;
   }
 
   if (cmd_words_.size() == 1 && jobs_->getJobsAmount() == 0)
   {
-    std::cerr << "smash error: fg: jobs list is empty\n";
+    fprintf(getErrFile(), "smash error: fg: jobs list is empty\n");
     return;
   }
 
   if (cmd_words_.size() == 2 && !jobs_->isJobIdExist(stoi(cmd_words_[1])))
   {
-    std::cerr << "smash error: fg: job-id <job-id> does not exist\n";
+    fprintf(getErrFile(), "smash error: fg: job-id <job-id> does not exist\n");
     return;
   }
-
   int new_foreground_job_id = cmd_words_.size() == 2 ? stoi(cmd_words_[1]) : jobs_->getMaxJobId();
   jobs_->moveToForegound(new_foreground_job_id);
+  fprintf(getOutFile(), "%s : %d\n", jobs_->getForegroundJob()->getCommandText().c_str(), jobs_->getForegroundJobPid());
 }
 
 void JobsList::moveToForegound(int job_id)
@@ -469,12 +633,12 @@ void KillCommand::execute()
           isNumbericString(cmd_words_[1].substr(1)),
       isNumbericString(cmd_words_[0]))
   {
-    std::cerr << "smash error: kill: invalid arguments\n";
+    fprintf(getErrFile(), "smash error: kill: invalid arguments\n");
     return;
   }
   if (!jobs_->isJobIdExist(stoi(cmd_words_[2])))
   {
-    std::cerr << "smash error: kill: job-id " << cmd_words_[2] << " does not exist\n";
+    fprintf(getErrFile(), "smash error: kill: job-id %s does not exist\n", cmd_words_[2].c_str());
     return;
   }
   int result = kill(stoi(cmd_words_[2]), stoi(cmd_words_[1].substr(1)));
@@ -506,12 +670,12 @@ void ChangeDirCommand::execute()
 {
   if (cmd_words_.size() > 2)
   {
-    std::cerr << "smash error: cd: too many arguments\n";
+    fprintf(getErrFile(), "smash error: cd: too many arguments\n");
     return;
   }
   if (cmd_words_.size() < 2)
   {
-    std::cerr << "smash error: cd: need an argument\n";
+    fprintf(getErrFile(), "smash error: cd: need an argument\n");
     return;
   }
   std::string current_path = getCurrentPath();
@@ -551,7 +715,7 @@ void ShowPidCommand::execute()
     macro because it doesnt allow us to return a value */
   pid_t smash_pid = getpid();
   // outputting the pid per the requested foramt
-  std::cout << "smash pid is " << smash_pid << "\n";
+  fprintf(getOutFile(), "smash pid is %d\n", smash_pid);
 }
 
 int JobsList::JobEntry::getProcessId()
@@ -574,15 +738,14 @@ void JobsList::JobEntry::setIsStopped(bool new_is_stopped)
   is_stopped_ = new_is_stopped;
 }
 
-std::ostream &operator<<(std::ostream &os, const JobsList::JobEntry &job)
+std::string JobsList::JobEntry::toString()
 {
-  os << "[" << job.job_id_ << "] " << job.command_text_ << " : "
-     << job.process_id_ << " " << difftime(time(nullptr), job.start_time_);
-  if (job.is_stopped_)
+  std::string str = "[" + to_string(job_id_) + "] " + command_text_ + " : " + to_string(process_id_) + " " + to_string(difftime(time(nullptr), start_time_));
+  if (is_stopped_)
   {
-    os << " (stopped)";
+    str += " (stopped)";
   }
-  return os << "\n";
+  return str;
 }
 
 JobsList::JobEntry::JobEntry(int job_id, int process_id,
@@ -616,7 +779,7 @@ void callBashExec(ExternalCommand *cmd)
 {
   std::string str = cmd->getCommandLine();
   char *chars_str = new char[str.size()];
-  std::cout << chars_str;
+  fprintf(cmd->getOutFile(), "%s", chars_str);
   str = _rtrim(str);
   int size = str.size();
   strncpy(chars_str, str.c_str(), size + 1);
@@ -625,10 +788,9 @@ void callBashExec(ExternalCommand *cmd)
     chars_str[size - 1] = '\0';
   }
   execl("/bin/bash", "bash", "-c", chars_str, nullptr);
-  std::cout << errno << "\n";
   // if we are here, the exec has failed.
   delete[] chars_str;
-  std::cerr << "exec has failed!\n";
+  fprintf(cmd->getErrFile(), "exec has failed!\n");
   exit(errno);
 }
 
@@ -707,15 +869,6 @@ pid_t JobsList::addJob(Command *cmd, bool isForeground, bool isStopped)
       jobs_[new_job_id] = new_job;
     }
     return p;
-  }
-}
-
-void JobsList::printJobsList()
-{
-  for (map<int, JobEntry *>::iterator iter = jobs_.begin();
-       iter != jobs_.end(); iter++)
-  {
-    std::cout << iter->second;
   }
 }
 

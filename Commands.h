@@ -23,13 +23,28 @@
 class JobsList;
 class Command
 {
+  static Command *getCommandFromTheRightType(std::vector<std::string> cmd_words,
+                                             std::string cmd_line, JobsList *jobs);
+
+  FILE *in_file_ = stdin;
+  FILE *out_file_ = stdout;
+  FILE *err_file_ = stderr;
+
 protected:
   Command(std::string &cmd_line);
+  Command(std::string &cmd_line, FILE *in_file, FILE *out_file, FILE *err_file);
 
   std::string cmd_line_;
   // bool is_foreground_command_;
   // TODO: Add your data members
 public:
+  FILE *getInFile();
+  FILE *getOutFile();
+  FILE *getErrFile();
+  void setInFile(FILE *in_file);
+  void setOutFile(FILE *out_file);
+  void setErrFile(FILE *err_file);
+
   bool finishedWithAmparsand();
   std::string getCommandLine();
   virtual ~Command() = default;
@@ -63,6 +78,9 @@ public:
 
 class PipeCommand : public Command
 {
+  Command *first_cmd_;
+  Command *second_cmd_;
+  FILE *fds_[2];
   // TODO: Add your data members
 public:
   PipeCommand(std::string cmd_line);
@@ -72,6 +90,8 @@ public:
 
 class RedirectionCommand : public Command
 {
+  Command *cmd_;
+  FILE *input_file_;
   // TODO: Add your data members
 public:
   explicit RedirectionCommand(std::string cmd_line);
@@ -111,7 +131,8 @@ class JobsList;
 class QuitCommand : public BuiltInCommand
 {
   JobsList *jobs_;
-public: 
+
+public:
   // TODO: Add your data members public:
   QuitCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
   virtual ~QuitCommand() {}
@@ -129,12 +150,12 @@ public:
     const std::string command_text_;
     bool is_stopped_;
     const time_t start_time_;
-    friend std::ostream &operator<<(std::ostream &os, const JobsList::JobEntry &job);
 
   public:
     JobEntry(int job_id, int process_id, std::string command_text_, bool is_stopped, time_t start_time_);
     int getProcessId();
     std::string getCommandText();
+    std::string toString();
     int getJobId();
     bool isStopped();
     void setIsStopped(bool new_is_stopped);
@@ -158,7 +179,6 @@ public:
   void removeForegroundJob();
   bool isJobIdExist(int job_id);
   pid_t addJob(Command *cmd, bool isForeground, bool isStopped = false);
-  void printJobsList();
   void killAllJobsWithPrinting();
   void removeFinishedJobs();
   JobEntry *getJobById(int jobId);
@@ -223,7 +243,7 @@ public:
 class TailCommand : public BuiltInCommand
 {
 public:
-  TailCommand(std::string cmd_line);
+  TailCommand(std::vector<std::string> cmd_words, std::string cmd_line);
   virtual ~TailCommand() {}
   void execute() override;
 };
@@ -231,7 +251,7 @@ public:
 class TouchCommand : public BuiltInCommand
 {
 public:
-  TouchCommand(std::string cmd_line);
+  TouchCommand(std::vector<std::string> cmd_words, std::string cmd_line);
   virtual ~TouchCommand() {}
   void execute() override;
 };
@@ -300,22 +320,22 @@ public:
   void setLastPath(std::string new_last_path);
 };
 
-class BuiltInCommandNamesToNumbers
+class CommandNamesToNumbers
 {
 private:
   std::map<std::string, int> commands_map_;
-  BuiltInCommandNamesToNumbers();
+  CommandNamesToNumbers();
 
 public:
-  BuiltInCommandNamesToNumbers(BuiltInCommandNamesToNumbers const &) = delete; // disable copy ctor
-  void operator=(BuiltInCommandNamesToNumbers const &) = delete;               // disable = operator
-  static BuiltInCommandNamesToNumbers &getInstance()                           // make BuiltInCommandNamesToNumbers singleton
+  CommandNamesToNumbers(CommandNamesToNumbers const &) = delete; // disable copy ctor
+  void operator=(CommandNamesToNumbers const &) = delete;        // disable = operator
+  static CommandNamesToNumbers &getInstance()                    // make CommandNamesToNumbers singleton
   {
-    static BuiltInCommandNamesToNumbers instance; // Guaranteed to be destroyed.
+    static CommandNamesToNumbers instance; // Guaranteed to be destroyed.
     // Instantiated on first use.
     return instance;
   }
-  ~BuiltInCommandNamesToNumbers() = default;
+  ~CommandNamesToNumbers() = default;
   int getCommandNumber(const std::string &cmd_name);
 };
 
@@ -335,6 +355,5 @@ public:
   virtual ~ShowPwdCommand() {}
   void execute() override;
 };
-
 
 #endif // SMASH_COMMAND_H_
