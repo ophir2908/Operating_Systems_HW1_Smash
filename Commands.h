@@ -8,6 +8,7 @@
 #define PATH_MAX_LENGTH (200)
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+#define MAX_SIGNUM (64)
 
 #define DO_SYS(syscall)               \
   do                                  \
@@ -25,11 +26,12 @@ class Command
 {
   static Command *getCommandFromTheRightType(std::vector<std::string> cmd_words,
                                              std::string cmd_line, JobsList *jobs,
-                                             FILE **fds);
+                                             bool *did_quit, FILE **fds, bool is_foreground_command);
 
   FILE *in_file_ = stdin;
   FILE *out_file_ = stdout;
   FILE *err_file_ = stderr;
+  bool does_need_redirect_[3] = {false, false, false};
 
 protected:
   Command(std::string &cmd_line);
@@ -41,22 +43,67 @@ protected:
 public:
   virtual FILE **getFds();
 
+  bool pipeRedirectInput();
+  bool pipeRedirectOutput();
+  bool pipeRedirectError();
+  void setPipeRedirectInput(bool does_need_redirect_in);
+  void setPipeRedirectOutput(bool does_need_redirect_out);
+  void setPipeRedirectError(bool does_need_redirect_err);
   FILE *getInFile();
   FILE *getOutFile();
   FILE *getErrFile();
   void setInFile(FILE *in_file);
   void setOutFile(FILE *out_file);
   void setErrFile(FILE *err_file);
-
-  virtual bool isExternalCommand();
+  virtual bool isExternal();
   bool finishedWithAmparsand();
   std::string getCommandLine();
   virtual ~Command() = default;
   virtual void execute() = 0;
-  static Command *getInstance(std::string cmd_line, JobsList *jobs, FILE **fds);
+  static Command *getInstance(std::string cmd_line, JobsList *jobs, bool *did_quit, FILE **fds);
   // virtual void prepare();
   // virtual void cleanup();
   //  TODO: Add your extra methods if needed
+};
+
+class TimeoutCommand : public Command
+{
+  JobsList *jobs_;
+  std::vector<std::string> cmd_words_;
+  std::string inner_cmd_line_;
+  int waiting_time_;
+  Command *inner_cmd_ = nullptr;
+
+public:
+
+  TimeoutCommand(std::vector<std::string> cmd_words, std::string &cmd_line, JobsList *jobs, bool is_foreground_command);
+  ~TimeoutCommand();
+  void execute() override;
+};
+
+typedef struct {
+  int job_id_;
+  int delta_;
+  std::string cmd_line_;
+} TimeoutData;
+
+class TimeStamp
+{
+  std::list<TimeoutData> list_;
+  TimeStamp() {}
+public:
+  TimeStamp(TimeStamp const &) = delete;       // disable copy ctor
+  void operator=(TimeStamp const &) = delete; // disable = operator
+  static TimeStamp &getInstance()             // make JobsList singleton
+  {
+    static TimeStamp instance; // Guaranteed to be destroyed.
+    // Instantiated on first use.
+    return instance;
+  }
+  bool empty();
+  TimeoutData* getFirst();
+  void insertTimeoutCommand(int job_id, int time, std::string cmd_line_);
+  void pop();
 };
 
 class BuiltInCommand : public Command
@@ -73,14 +120,13 @@ public:
 class ExternalCommand : public Command
 {
   JobsList *jobs_;
-  FILE *fds_[2]; // using only if the external command is a part of pipe command
-
+  FILE *fds_[2]; // using only if the external command is a part of a pipe command
 public:
   FILE **getFds() override;
   ExternalCommand(std::string cmd_line, JobsList *jobs, FILE **fds);
   virtual ~ExternalCommand() {}
   void execute() override;
-  bool isExternalCommand() override;
+  bool isExternal() override;
 };
 
 class PipeCommand : public Command
@@ -93,18 +139,18 @@ class PipeCommand : public Command
 public:
   FILE **getFds() override;
   PipeCommand(std::string cmd_line);
-  virtual ~PipeCommand() {}
+  virtual ~PipeCommand();
   void execute() override;
 };
 
 class RedirectionCommand : public Command
 {
-  Command *cmd_;
+  Command *inner_cmd_;
   FILE *file_;
   // TODO: Add your data members
 public:
   explicit RedirectionCommand(std::string cmd_line);
-  virtual ~RedirectionCommand() {}
+  virtual ~RedirectionCommand() { delete inner_cmd_; }
   void execute() override;
   // void prepare() override;
   // void cleanup() override;
@@ -140,10 +186,11 @@ class JobsList;
 class QuitCommand : public BuiltInCommand
 {
   JobsList *jobs_;
+  bool *did_quit_;
 
 public:
   // TODO: Add your data members public:
-  QuitCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs);
+  QuitCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs, bool *did_quit);
   virtual ~QuitCommand() {}
   void execute() override;
 };
@@ -180,6 +227,7 @@ private:
   JobsList();
 
 public:
+  int getLastNewPid();
   int getMaxJobId();
   ~JobsList();
   int getForegroundJobPid();
@@ -282,7 +330,7 @@ public:
     return instance;
   }
   ~SmallShell();
-  void executeCommand(std::string cmd_line);
+  void executeCommand(std::string cmd_line, bool *did_quit);
   // TODO: add extra methods as needed
 };
 
@@ -364,5 +412,7 @@ public:
   virtual ~ShowPwdCommand() {}
   void execute() override;
 };
+
+std::string _ltrim(const std::string &s);
 
 #endif // SMASH_COMMAND_H_
