@@ -24,7 +24,8 @@ class JobsList;
 class Command
 {
   static Command *getCommandFromTheRightType(std::vector<std::string> cmd_words,
-                                             std::string cmd_line, JobsList *jobs);
+                                             std::string cmd_line, JobsList *jobs,
+                                             FILE **fds);
 
   FILE *in_file_ = stdin;
   FILE *out_file_ = stdout;
@@ -38,6 +39,8 @@ protected:
   // bool is_foreground_command_;
   // TODO: Add your data members
 public:
+  virtual FILE **getFds();
+
   FILE *getInFile();
   FILE *getOutFile();
   FILE *getErrFile();
@@ -45,11 +48,12 @@ public:
   void setOutFile(FILE *out_file);
   void setErrFile(FILE *err_file);
 
+  virtual bool isExternalCommand();
   bool finishedWithAmparsand();
   std::string getCommandLine();
   virtual ~Command() = default;
   virtual void execute() = 0;
-  static Command *getInstance(std::string cmd_line, JobsList *jobs);
+  static Command *getInstance(std::string cmd_line, JobsList *jobs, FILE **fds);
   // virtual void prepare();
   // virtual void cleanup();
   //  TODO: Add your extra methods if needed
@@ -69,11 +73,14 @@ public:
 class ExternalCommand : public Command
 {
   JobsList *jobs_;
+  FILE *fds_[2]; // using only if the external command is a part of pipe command
 
 public:
-  ExternalCommand(std::string cmd_line, JobsList *jobs);
+  FILE **getFds() override;
+  ExternalCommand(std::string cmd_line, JobsList *jobs, FILE **fds);
   virtual ~ExternalCommand() {}
   void execute() override;
+  bool isExternalCommand() override;
 };
 
 class PipeCommand : public Command
@@ -81,8 +88,10 @@ class PipeCommand : public Command
   Command *first_cmd_;
   Command *second_cmd_;
   FILE *fds_[2];
+
   // TODO: Add your data members
 public:
+  FILE **getFds() override;
   PipeCommand(std::string cmd_line);
   virtual ~PipeCommand() {}
   void execute() override;
@@ -91,7 +100,7 @@ public:
 class RedirectionCommand : public Command
 {
   Command *cmd_;
-  FILE *input_file_;
+  FILE *file_;
   // TODO: Add your data members
 public:
   explicit RedirectionCommand(std::string cmd_line);
@@ -177,7 +186,7 @@ public:
   JobEntry *getForegroundJob();
   void moveToForegound(int job_id);
   void removeForegroundJob();
-  bool isJobIdExist(int job_id);
+  bool doesJobIdExist(int job_id);
   pid_t addJob(Command *cmd, bool isForeground, bool isStopped = false);
   void killAllJobsWithPrinting();
   void removeFinishedJobs();

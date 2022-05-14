@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <iostream>
 #include <fstream>
+#include <utime.h>
+#include <time.h>
 
 using namespace std;
 
@@ -46,7 +48,16 @@ string _trim(const std::string &s)
 
 bool isNumbericString(std::string str)
 {
-  for (unsigned i = 0; i < str.size(); i++)
+  unsigned i;
+  if (str[0] == '-')
+  {
+    i = 1;
+  }
+  else
+  {
+    i = 0;
+  }
+  for (; i < str.size(); i++)
   {
     if (str[i] > '9' || str[i] < '0')
     {
@@ -142,7 +153,7 @@ void SmallShell::executeCommand(std::string cmd_line)
 {
   // TODO: Add your implementation here
   JobsList &jobs = JobsList::getInstance();
-  Command *cmd = Command::getInstance(cmd_line, &jobs);
+  Command *cmd = Command::getInstance(cmd_line, &jobs, nullptr);
   jobs.removeFinishedJobs();
   cmd->execute();
   delete cmd;
@@ -299,31 +310,73 @@ void TailCommand::execute()
     return;
   }
   std::string file_name = size == 2 ? cmd_words_[1] : cmd_words_[2];
-  int lines_amount = size == 2 ? 10 : stoi(cmd_words_[1].substr(1));
+  int lines_amount = size == 2 ? 10 : -stoi(cmd_words_[1]);
   std::ifstream file;
   file.open(file_name);
+  if (!file.is_open())
+  {
+    perror("smash error: open failed");
+    return;
+  }
   std::string line;
-  for (int i = 0; i < lines_amount; i++)
+  int num_of_lines_in_file = 0;
+  while (!file.eof())
   {
     std::getline(file, line);
-    if (file.eof())
+    ++num_of_lines_in_file;
+  }
+  int first_line_to_print = num_of_lines_in_file - lines_amount;
+  int line_number = 0;
+  // file.close();
+  // file.open(file_name);
+  file.seekg(0);
+  while (!file.eof())
+  {
+    std::getline(file, line);
+    ++line_number;
+    if (line_number > first_line_to_print)
     {
-      break;
+      fprintf(getOutFile(), "%s", line.c_str());
+      if (!file.eof())
+      {
+        fprintf(getOutFile(), "\n");
+      }
     }
-    fprintf(getOutFile(), "%s\n", line.c_str());
   }
   file.close();
 }
 
-/*TouchCommand::TouchCommand(std::vector<std::string> cmd_words, std::string cmd_line) : BuiltInCommand(cmd_words, cmd_line) {}
+TouchCommand::TouchCommand(std::vector<std::string> cmd_words, std::string cmd_line) : BuiltInCommand(cmd_words, cmd_line) {}
 
 void TouchCommand::execute()
 {
-
-}*/
+  if (cmd_words_.size() != 3)
+  {
+    fprintf(getErrFile(), "smash error: touch: invalid arguments\n");
+    return;
+  }
+  std::vector<std::string> time_data = split(cmd_words_[2], ':');
+  struct tm t1;
+  t1.tm_sec = stoi(time_data[0]);
+  t1.tm_min = stoi(time_data[1]);
+  t1.tm_hour = stoi(time_data[2]);
+  t1.tm_mday = stoi(time_data[3]);
+  t1.tm_mon = stoi(time_data[4]) - 1;
+  int year_delta = stoi(time_data[5]) - 1900;
+  if (year_delta > 0)
+  {
+    t1.tm_year = stoi(time_data[5]) - 1900;
+  }
+  time_t t2 = mktime(&t1);
+  struct utimbuf t3;
+  t3.actime = t2;
+  t3.modtime = t2;
+  utime(cmd_words_[1].c_str(), &t3);
+}
 
 Command *Command::getCommandFromTheRightType(std::vector<std::string> cmd_words,
-                                             std::string cmd_line, JobsList *jobs)
+                                             std::string cmd_line, JobsList *jobs,
+                                             FILE **fds)
 {
   std::string command_type = cmd_words[0];
   CommandNamesToNumbers &commands_map = CommandNamesToNumbers::getInstance();
@@ -374,12 +427,12 @@ Command *Command::getCommandFromTheRightType(std::vector<std::string> cmd_words,
   case TAIL:
     cmd_object_ptr = new TailCommand(cmd_words, cmd_line);
     return cmd_object_ptr;
-  /*case TOUCH:
+  case TOUCH:
     cmd_object_ptr = new TouchCommand(cmd_words, cmd_line);
-    return cmd_object_ptr;*/
+    return cmd_object_ptr;
   default:
     // the command is not a built-in command
-    cmd_object_ptr = new ExternalCommand(cmd_line, jobs);
+    cmd_object_ptr = new ExternalCommand(cmd_line, jobs, fds);
     return cmd_object_ptr;
   }
 }
@@ -409,7 +462,7 @@ void Command::setErrFile(FILE *err_file)
   err_file_ = err_file;
 }
 
-Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
+Command *Command::getInstance(std::string cmd_line, JobsList *jobs, FILE **fds)
 {
   std::string cmd_line_copy = cmd_line;
   cmd_line_copy = _rtrim(cmd_line_copy);
@@ -430,13 +483,13 @@ Command *Command::getInstance(std::string cmd_line, JobsList *jobs)
     // this is an RedirectionCommand command
     return new RedirectionCommand(cmd_line);
   }
-  return getCommandFromTheRightType(cmd_words, cmd_line, jobs);
+  return getCommandFromTheRightType(cmd_words, cmd_line, jobs, fds);
 }
 
 void RedirectionCommand::execute()
 {
   cmd_->execute();
-  fclose(input_file_);
+  fclose(getInFile());
 }
 
 RedirectionCommand::RedirectionCommand(std::string cmd_line) : Command(cmd_line)
@@ -450,25 +503,67 @@ RedirectionCommand::RedirectionCommand(std::string cmd_line) : Command(cmd_line)
     cmd_parts.erase(++cmd_parts.begin());
   }
   JobsList &jobs = JobsList::getInstance();
-  cmd_ = Command::getInstance(cmd_parts[0], &jobs);
+  cmd_ = Command::getInstance(cmd_parts[0], &jobs, nullptr);
   std::string file_name = _trim(cmd_parts[1]);
-  input_file_ = fopen(file_name.c_str(), writing_type);
-  if (input_file_ == nullptr)
+  file_ = fopen(file_name.c_str(), writing_type);
+  if (file_ == nullptr)
   {
     perror("fopen failed\n");
   }
   else
   {
-    cmd_->setOutFile(input_file_);
+    cmd_->setOutFile(file_);
+    if (cmd_->isExternalCommand())
+    {
+      
+    }
   }
+}
+
+bool Command::isExternalCommand()
+{
+  return false;
+}
+
+bool ExternalCommand::isExternalCommand()
+{
+  return true;
+}
+
+FILE **PipeCommand::getFds()
+{
+  return fds_;
+}
+
+FILE **ExternalCommand::getFds()
+{
+  return fds_;
+}
+
+FILE **Command::getFds()
+{
+  return nullptr;
 }
 
 void PipeCommand::execute()
 {
-  first_cmd_->execute();
-  second_cmd_->execute();
-  fclose(fds_[0]);
-  fclose(fds_[1]);
+  JobsList &jobs = JobsList::getInstance();
+  pid_t p = jobs.addJob(this, true); // esuming second command is external
+  if (p < 0)
+  {
+    perror("smash error: fork failed");
+  }
+  if (p == 0)
+  {
+    second_cmd_->execute();
+  }
+  else
+  {
+    // fclose(fds_[0]);
+    first_cmd_->execute();
+    fclose(fds_[1]);
+    waitpid(p, nullptr, WUNTRACED);
+  }
 }
 
 PipeCommand::PipeCommand(std::string cmd_line) : Command(cmd_line)
@@ -481,8 +576,6 @@ PipeCommand::PipeCommand(std::string cmd_line) : Command(cmd_line)
     cmd_parts[1] = cmd_parts[1].substr(1);
   }
   JobsList &jobs = JobsList::getInstance();
-  first_cmd_ = Command::getInstance(cmd_parts[0], &jobs);
-  second_cmd_ = Command::getInstance(cmd_parts[1], &jobs);
   int tmp_fds[2];
   if (pipe(tmp_fds) < 0)
   {
@@ -490,6 +583,9 @@ PipeCommand::PipeCommand(std::string cmd_line) : Command(cmd_line)
   }
   fds_[0] = fdopen(tmp_fds[0], "r");
   fds_[1] = fdopen(tmp_fds[1], "w");
+  first_cmd_ = Command::getInstance(cmd_parts[0], &jobs, fds_);
+  second_cmd_ = Command::getInstance(cmd_parts[1], &jobs, fds_);
+
   if (is_to_cerr)
   {
     first_cmd_->setErrFile(fds_[1]);
@@ -501,7 +597,9 @@ PipeCommand::PipeCommand(std::string cmd_line) : Command(cmd_line)
   second_cmd_->setInFile(fds_[0]);
 }
 
-QuitCommand::QuitCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
+QuitCommand::QuitCommand(std::vector<std::string> cmd_words,
+                         std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line),
+                                                                 jobs_(jobs) {}
 
 void QuitCommand::execute()
 {
@@ -513,16 +611,29 @@ void QuitCommand::execute()
   exit(0);
 }
 
-BackgroundCommand::BackgroundCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
+BackgroundCommand::BackgroundCommand(std::vector<std::string> cmd_words,
+                                     std::string cmd_line,
+                                     JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line),
+                                                       jobs_(jobs) {}
 
 void BackgroundCommand::execute()
 {
-  if (cmd_words_.size() > 2 || (cmd_words_.size() == 2 && !isNumbericString(cmd_words_[1])))
-  {
-    fprintf(getErrFile(), "smash error: fg: invalid arguments\n");
-    return;
-  }
   JobsList::JobEntry *job_to_resume = nullptr;
+  if (cmd_words_.size() == 2 && isNumbericString(cmd_words_[1]))
+  {
+    int job_id = stoi(cmd_words_[1]);
+    if (!jobs_->doesJobIdExist(job_id))
+    {
+      fprintf(getErrFile(), "smash error: bg: job-id %d does not exist\n", job_id);
+      return;
+    }
+    job_to_resume = jobs_->getJobById(job_id);
+    if (!job_to_resume->isStopped())
+    {
+      fprintf(getErrFile(), "smash error: bg: job-id %d is already running in the background\n", job_id);
+      return;
+    }
+  }
   if (cmd_words_.size() == 1)
   {
     job_to_resume = jobs_->getLastStoppedJob();
@@ -532,22 +643,13 @@ void BackgroundCommand::execute()
       return;
     }
   }
-  else
-  { // cmd_words_.size() == 2
-    int job_id = stoi(cmd_words_[1]);
-    if (!jobs_->isJobIdExist(job_id))
-    {
-      fprintf(getErrFile(), "smash error: bg: job-id <job-id> does not exist\n");
-      return;
-    }
-    job_to_resume = jobs_->getJobById(job_id);
-    if (!job_to_resume->isStopped())
-    {
-      fprintf(getErrFile(), "smash error: bg: job-id <job-id fg > is already running in the background\n");
-      return;
-    }
+  if (cmd_words_.size() > 2 || (cmd_words_.size() == 2 && !isNumbericString(cmd_words_[1])))
+  {
+    fprintf(getErrFile(), "smash error: bg: invalid arguments\n");
+    return;
   }
-  fprintf(getOutFile(), "%s\n", job_to_resume->getCommandText().c_str());
+
+  fprintf(getOutFile(), "%s : %d\n", job_to_resume->getCommandText().c_str(), job_to_resume->getProcessId());
   jobs_->resumeJobById(job_to_resume->getJobId());
 }
 
@@ -572,6 +674,7 @@ JobsList::JobEntry *JobsList::getLastStoppedJob()
 
 int JobsList::getJobsAmount()
 {
+  // std::cout << "ophir: getJobsAmount(): " << jobs_.size() << "\n";
   return jobs_.size();
 }
 
@@ -593,14 +696,13 @@ void ForegroundCommand::execute()
     return;
   }
 
-  if (cmd_words_.size() == 2 && !jobs_->isJobIdExist(stoi(cmd_words_[1])))
+  if (cmd_words_.size() == 2 && !jobs_->doesJobIdExist(stoi(cmd_words_[1])))
   {
-    fprintf(getErrFile(), "smash error: fg: job-id <job-id> does not exist\n");
+    fprintf(getErrFile(), "smash error: fg: job-id %d does not exist\n", stoi(cmd_words_[1]));
     return;
   }
   int new_foreground_job_id = cmd_words_.size() == 2 ? stoi(cmd_words_[1]) : jobs_->getMaxJobId();
   jobs_->moveToForegound(new_foreground_job_id);
-  fprintf(getOutFile(), "%s : %d\n", jobs_->getForegroundJob()->getCommandText().c_str(), jobs_->getForegroundJobPid());
 }
 
 void JobsList::moveToForegound(int job_id)
@@ -611,10 +713,13 @@ void JobsList::moveToForegound(int job_id)
   {
     resumeJobById(job_id);
   }
+
   pid_t p = foreground_job_->getProcessId();
+  fprintf(stdout, "%s : %d\n", foreground_job_->getCommandText().c_str(), p);
+
   int stat;
   waitpid(p, &stat, WUNTRACED);
-  if (stat == 0)
+  if (!WIFSTOPPED(stat))
   {
     removeForegroundJob();
   }
@@ -622,7 +727,7 @@ void JobsList::moveToForegound(int job_id)
 
 KillCommand::KillCommand(std::vector<std::string> cmd_words, std::string cmd_line, JobsList *jobs) : BuiltInCommand(cmd_words, cmd_line), jobs_(jobs) {}
 
-bool JobsList::isJobIdExist(int job_id)
+bool JobsList::doesJobIdExist(int job_id)
 {
   return (foreground_job_ != nullptr && foreground_job_->getJobId() == job_id) || jobs_.find(job_id) != jobs_.end();
 }
@@ -636,12 +741,15 @@ void KillCommand::execute()
     fprintf(getErrFile(), "smash error: kill: invalid arguments\n");
     return;
   }
-  if (!jobs_->isJobIdExist(stoi(cmd_words_[2])))
+  if (!jobs_->doesJobIdExist(stoi(cmd_words_[2])))
   {
     fprintf(getErrFile(), "smash error: kill: job-id %s does not exist\n", cmd_words_[2].c_str());
     return;
   }
-  int result = kill(stoi(cmd_words_[2]), stoi(cmd_words_[1].substr(1)));
+  int pid = stoi(cmd_words_[2]);
+  int signum = stoi(cmd_words_[1].substr(1));
+  int result = kill(pid, signum);
+  fprintf(getOutFile(), "signal number %d was sent to pid %d\n", signum, pid);
   if (result != 0)
   {
     perror("smash error: kill failed");
@@ -680,20 +788,33 @@ void ChangeDirCommand::execute()
   }
   std::string current_path = getCurrentPath();
   LastPath &last_path = LastPath::getInstance();
+  int ret = 0;
   if (cmd_words_[1] == "-")
   {
-    chdir(last_path.getLastPath().c_str());
+    if (last_path.getLastPath() == "")
+    {
+      fprintf(getErrFile(), "smash error: cd: OLDPWD not set\n");
+      return;
+    }
+    ret = chdir(last_path.getLastPath().c_str());
   }
   else
   {
-    chdir(cmd_words_[1].c_str());
+    ret = chdir(cmd_words_[1].c_str());
   }
-  last_path.setLastPath(current_path);
+  if (ret < 0)
+  {
+    perror("smash error: chdir failed");
+  }
+  else
+  {
+    last_path.setLastPath(current_path);
+  }
 }
 
 LastPath::LastPath()
 {
-  full_last_path_ = getCurrentPath();
+  full_last_path_ = "";
 }
 
 std::string &LastPath::getLastPath()
@@ -740,12 +861,13 @@ void JobsList::JobEntry::setIsStopped(bool new_is_stopped)
 
 std::string JobsList::JobEntry::toString()
 {
-  std::string str = "[" + to_string(job_id_) + "] " + command_text_ + " : " + to_string(process_id_) + " " + to_string(difftime(time(nullptr), start_time_));
+  std::string str = "[" + to_string(job_id_) + "] " + command_text_ + " : " + to_string(process_id_) + " " +
+                    to_string((int)difftime(time(nullptr), start_time_)) + " secs";
   if (is_stopped_)
   {
     str += " (stopped)";
   }
-  return str;
+  return str + "\n";
 }
 
 JobsList::JobEntry::JobEntry(int job_id, int process_id,
@@ -761,7 +883,7 @@ JobsList::JobsList() {}
 
 JobsList::~JobsList()
 {
-  // delete JobEntrys
+  // delete the JobEntrys
   for (std::map<int, JobEntry *>::iterator iter = jobs_.begin();
        iter != jobs_.end(); iter++)
   {
@@ -773,7 +895,19 @@ JobsList::~JobsList()
   }
 }
 
-ExternalCommand::ExternalCommand(std::string cmd_line, JobsList *jobs) : Command(cmd_line), jobs_(jobs) {}
+ExternalCommand::ExternalCommand(std::string cmd_line, JobsList *jobs, FILE **fds) : Command(cmd_line), jobs_(jobs)
+{
+  if (fds != nullptr)
+  {
+    fds_[0] = fds[0];
+    fds_[1] = fds[1];
+  }
+  else
+  {
+    fds_[0] = nullptr;
+    fds_[1] = nullptr;
+  }
+}
 
 void callBashExec(ExternalCommand *cmd)
 {
@@ -790,7 +924,7 @@ void callBashExec(ExternalCommand *cmd)
   execl("/bin/bash", "bash", "-c", chars_str, nullptr);
   // if we are here, the exec has failed.
   delete[] chars_str;
-  fprintf(cmd->getErrFile(), "exec has failed!\n");
+  perror("smash error: exec failed");
   exit(errno);
 }
 
@@ -804,6 +938,16 @@ void ExternalCommand::execute()
 {
   bool isForeground = !finishedWithAmparsand();
   jobs_->removeFinishedJobs();
+  if (fds_[0] != nullptr)
+  {
+    // we're inside a pipe-command
+    close(0);
+    dup(fileno(fds_[0]));
+    fclose(fds_[0]);
+    // fclose(fds_[1]);
+    callBashExec(this);
+  }
+  // else
   pid_t p = jobs_->addJob(this, isForeground);
   if (p == 0)
   {
@@ -853,6 +997,7 @@ pid_t JobsList::addJob(Command *cmd, bool isForeground, bool isStopped)
   }
   if (p == 0)
   {
+    setpgrp();
     return p;
   }
   else

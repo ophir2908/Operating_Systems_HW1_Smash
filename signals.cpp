@@ -9,6 +9,7 @@ void ctrlCHandler(int sig_num)
 {
   std::cout << "smash: got ctrl-C\n";
   JobsList &jobs = JobsList::getInstance();
+  std::cout << "smash: process " << jobs.getForegroundJobPid() << " was killed\n";
   if (jobs.getForegroundJob() == nullptr) {
     return;
   }
@@ -20,6 +21,7 @@ void ctrlZHandler(int sig_num)
 {
   std::cout << "smash: got ctrl-Z\n";
   JobsList &jobs = JobsList::getInstance();
+  std::cout << "smash: process " << jobs.getForegroundJobPid() << " was stopped\n";
   if (jobs.getForegroundJob() == nullptr) {
     return;
   }
@@ -30,4 +32,3 @@ void ctrlZHandler(int sig_num)
 void alarmHandler(int sig_num) {
   // TODO: Add your implementation
 }
-
